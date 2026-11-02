@@ -168,6 +168,13 @@
             app:iconSpaceReserved="false"
             app:fragment="com.emanuelef.remote_capture.fragments.prefs.DnsSettings" />
 
+        <Preference
+            android:key="tunnel_settings"
+            app:title="@string/tunnel_settings"
+            app:summary="@string/tunnel_settings_summary"
+            app:iconSpaceReserved="false"
+            app:fragment="com.emanuelef.remote_capture.fragments.prefs.TunnelSettings" />
+
         <SwitchPreference
             app:key="start_at_boot"
             android:title="@string/start_at_boot"

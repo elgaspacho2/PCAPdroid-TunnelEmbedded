@@ -490,6 +490,26 @@ int run_tunnel(pcapdroid_t *pd) {
                 continue;
             }
 
+            /* Cryptokey routing, enforced before anything else looks at the packet.
+             * The datagram is authenticated, so it really came from our peer, but that
+             * says nothing about the source address it put in the inner header: without
+             * this check a hostile peer could inject packets that appear to come from a
+             * LAN host or from a server the app trusts.
+             *
+             * NOTE: pkt.tuple is still as received here, analyze_packet is what swaps the
+             * peers for an ingress packet. */
+            /* Copied out of the packed 5-tuple, as the rest of the codebase does, to
+             * avoid taking the address of a possibly unaligned member. */
+            zdtun_ip_t inner_src = pkt.tuple.src_ip;
+            if(!pd_tunnel_allows_source(pd->tunnel.tun, &inner_src, pkt.tuple.ipver)) {
+                char buf[512];
+                log_w("dropping inner packet with a source outside AllowedIPs: %s",
+                      zdtun_5tuple2str(&pkt.tuple, buf, sizeof(buf)));
+                pd->tunnel.tun->status.spoofed_pkts++;
+                pd->num_dropped_pkts++;
+                continue;
+            }
+
             if(!analyze_packet(pd, &pkt, false))
                 continue;
 

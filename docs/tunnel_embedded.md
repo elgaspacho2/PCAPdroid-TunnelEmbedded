@@ -47,6 +47,7 @@ packet by packet.
 | Crypto | `rust/wgtunnel/` | WireGuard state machine (boringtun), exposed over a C ABI |
 | Config | `java/.../model/WgConfig.java` | wg-quick parser |
 | Wiring | `java/.../CaptureService.java` | Validation, tun setup, endpoint resolution, JNI getters |
+| UI | `java/.../fragments/prefs/TunnelSettings.java`, `res/xml/tunnel_preferences.xml` | Settings screen, reached from Settings → Capture → Embedded tunnel |
 
 The Rust library owns no socket and no file descriptor: it only turns plaintext IP packets
 into WireGuard datagrams and back. Everything else — accounting, the firewall, the PCAP
@@ -114,6 +115,25 @@ header (32 bytes), UDP (8) and IP (20 or 40) must still fit the real path MTU. T
 therefore uses the configuration's `MTU`, defaulting to wg-quick's own 1420, and
 `WgConfig` rejects anything outside 1280–1500.
 
+## Cryptokey routing
+
+A WireGuard datagram is authenticated, so one that decrypts really did come from the
+configured peer. That says nothing about the source address the peer wrote in the *inner*
+header. WireGuard's answer is cryptokey routing: a peer may only send packets whose source
+falls inside its `AllowedIPs`. It is part of the protocol's security model, not an
+optional nicety — without it a hostile or compromised server could inject packets that
+appear to come from a LAN host, or from a server the app trusts.
+
+`capture_tunnel.c` therefore checks every inner packet's source against the configured
+prefixes before anything else looks at it, and counts the rejects in
+`pd_tunnel_status_t.spoofed_pkts`. The matcher and its parser are covered by
+`jni/tests/test/tunnel.c`, including non-byte-aligned prefixes, the IPv4/IPv6 family
+separation and the fail-closed behaviour on a malformed list.
+
+Note that `AllowedIPs = 0.0.0.0/0, ::/0` — the usual full-tunnel setting — authorizes
+every source by definition, so the check only bites on a split tunnel. That is the
+protocol's semantics, faithfully applied, not a weakening of it.
+
 ## Security notes
 
 * The tunnel configuration is **never** included in a settings backup
@@ -132,6 +152,25 @@ therefore uses the configuration's `MTU`, defaulting to wg-quick's own 1420, and
   `Table`, `FwMark`, …) are parsed and ignored, never executed.
 * A malformed or unauthenticated datagram arriving on the UDP socket is logged at debug
   level and dropped. It is expected traffic on an open port and must not stop a capture.
+
+## Settings
+
+Settings → Capture → **Embedded tunnel**, following the same pattern as the SOCKS5 and DNS
+sub-screens, so nothing changes in the rest of the app. The screen hides itself in root
+mode, where the tunnel does not apply.
+
+Two things it deliberately does:
+
+* It never shows the raw configuration as a preference summary, since that text holds the
+  private key and the settings list is the first thing a screenshot catches. A parsed,
+  key-free recap (endpoint, addresses, MTU) is shown instead.
+* It rejects an invalid configuration where it is typed, with the parser's own message,
+  and warns up front about the combinations the capture service would refuse (L4 selected,
+  root mode, or TLS decryption / SOCKS5 / port mapping together with the L3 datapath).
+
+The datapath picker carries a full description of each mode's consequences rather than a
+bare label, because the choice is not reversible mid-capture and its effects — PCAP
+fidelity against proxy-based features — are not guessable from the name.
 
 ## Building
 
@@ -163,6 +202,12 @@ tunnel instances:
 cd app/src/main/rust/wgtunnel && cargo test
 ```
 
+The native tests, which cover the cryptokey routing, run through the existing harness:
+
+```bash
+cd app/src/main/jni/tests && make run_tests
+```
+
 ## Status
 
 Done:
@@ -171,22 +216,22 @@ Done:
   handling, rejection of malformed input).
 * `pd_tunnel_t` egress abstraction and the WireGuard backend.
 * L3 pass-through datapath, wired into `pd_run`.
+* Cryptokey routing on ingress, with native tests.
 * wg-quick parser with tests, preferences, and the `CaptureService` plumbing.
+* Settings screen.
 
 Remaining, in rough order:
 
-1. **Settings UI.** The preferences and the plumbing exist; there is no screen yet to paste
-   a configuration, show the tunnel state or generate a keypair. `wgt_keypair` and
-   `wgt_pubkey_from_private` are exported for it.
-2. **Status reporting.** `pd_tunnel_get_status` returns handshake age, RTT and counters;
-   nothing surfaces them in `StatusFragment` yet.
+1. **Status reporting.** `pd_tunnel_get_status` returns the handshake age, the RTT,
+   per-direction counters and the spoofed-packet count; nothing surfaces them in
+   `StatusFragment` yet.
+2. **Keypair generation in the UI.** `wgt_keypair` and `wgt_pubkey_from_private` are
+   exported for it, but there is no JNI binding yet. Pasting a provider's configuration
+   does not need them.
 3. **Roaming.** When the underlying network changes, the UDP socket must be recreated and
    re-protected. Today a fatal socket error stops the capture, which
    `PREF_RESTART_ON_DISCONNECT` partially covers.
-4. **AllowedIPs filtering on ingress.** A single-peer client with `0.0.0.0/0, ::/0` needs
-   none, but a split tunnel should drop inner packets whose source falls outside the
-   configured ranges.
-5. **Spoofed replies for blocked DNS queries**, to match the default mode (see above).
-6. **L4 datapath** (see above).
-7. **On-device testing.** Everything here is validated by unit tests and compilation; none
+4. **Spoofed replies for blocked DNS queries**, to match the default mode (see above).
+5. **L4 datapath** (see above).
+6. **On-device testing.** Everything here is validated by unit tests and compilation; none
    of it has run on a device yet.

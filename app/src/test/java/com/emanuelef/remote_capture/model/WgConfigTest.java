@@ -274,6 +274,43 @@ public class WgConfigTest {
     }
 
     @Test
+    public void rejectsTooManyAllowedIps() {
+        // The native matcher has a fixed-size array; the limit must be enforced here
+        // rather than silently truncated on the way down
+        StringBuilder allowed = new StringBuilder();
+        for (int i = 0; i < WgConfig.MAX_ALLOWED_IPS + 1; i++) {
+            if (i > 0)
+                allowed.append(", ");
+            allowed.append("10.").append(i).append(".0.0/16");
+        }
+
+        assertRejected(
+                "[Interface]\nPrivateKey = " + PRIV_KEY + "\nAddress = 10.6.0.2/32\n" +
+                "[Peer]\nPublicKey = " + PUB_KEY + "\n" +
+                "AllowedIPs = " + allowed + "\n" +
+                "Endpoint = 198.51.100.7:51820\n",
+                "more than " + WgConfig.MAX_ALLOWED_IPS);
+    }
+
+    @Test
+    public void acceptsExactlyTheAllowedIpsLimit() throws Exception {
+        StringBuilder allowed = new StringBuilder();
+        for (int i = 0; i < WgConfig.MAX_ALLOWED_IPS; i++) {
+            if (i > 0)
+                allowed.append(", ");
+            allowed.append("10.").append(i).append(".0.0/16");
+        }
+
+        WgConfig cfg = WgConfig.parse(
+                "[Interface]\nPrivateKey = " + PRIV_KEY + "\nAddress = 10.6.0.2/32\n" +
+                "[Peer]\nPublicKey = " + PUB_KEY + "\n" +
+                "AllowedIPs = " + allowed + "\n" +
+                "Endpoint = 198.51.100.7:51820\n");
+
+        assertEquals(WgConfig.MAX_ALLOWED_IPS, cfg.allowedIps.size());
+    }
+
+    @Test
     public void neverLeaksTheKeysInToString() throws Exception {
         String dump = WgConfig.parse(FULL_CONFIG).toString();
 

@@ -22,7 +22,9 @@
  * the status bookkeeping shared by every backend.
  */
 
+#include <stdlib.h>
 #include <string.h>
+#include <arpa/inet.h>
 
 #include "pcapdroid.h"
 #include "tunnel.h"
@@ -38,6 +40,127 @@ const char* pd_tunnel_state2str(pd_tunnel_state_t state) {
         case PD_TUNNEL_ERROR:      return "error";
         default:                   return "?";
     }
+}
+
+/* ******************************************************* */
+
+/* Parses the comma-separated AllowedIPs list handed over by the Java side, e.g.
+ * "0.0.0.0/0,::/0" or "10.0.0.0/8,192.168.1.5/32".
+ *
+ * Any malformed entry fails the whole parse: installing a partially applied filter would
+ * silently widen or narrow what the peer may send, and neither is acceptable for a
+ * security check. */
+bool pd_tunnel_parse_allowed_ips(pd_tunnel_t *tun, const char *list) {
+    const char *p = list;
+    tun->cfg.num_allowed_ips = 0;
+
+    while(*p) {
+        while((*p == ',') || (*p == ' '))
+            p++;
+        if(!*p)
+            break;
+
+        const char *end = strchr(p, ',');
+        size_t len = end ? (size_t)(end - p) : strlen(p);
+
+        char entry[INET6_ADDRSTRLEN + 8];
+        if(len >= sizeof(entry)) {
+            log_e("tunnel: AllowedIPs entry too long");
+            goto fail;
+        }
+        memcpy(entry, p, len);
+        entry[len] = '\0';
+
+        if(tun->cfg.num_allowed_ips >= PD_TUNNEL_MAX_ALLOWED_IPS) {
+            log_e("tunnel: more than %d AllowedIPs entries", PD_TUNNEL_MAX_ALLOWED_IPS);
+            goto fail;
+        }
+
+        char *slash = strchr(entry, '/');
+        if(!slash) {
+            log_e("tunnel: AllowedIPs entry '%s' has no prefix length", entry);
+            goto fail;
+        }
+        *slash = '\0';
+
+        pd_tunnel_prefix_t *prefix = &tun->cfg.allowed_ips[tun->cfg.num_allowed_ips];
+        int ipver = zdtun_parse_ip(entry, &prefix->ip);
+        if((ipver != 4) && (ipver != 6)) {
+            log_e("tunnel: AllowedIPs entry '%s' is not an IP address", entry);
+            goto fail;
+        }
+
+        const char *plen_str = slash + 1;
+        char *endptr = NULL;
+        long plen = strtol(plen_str, &endptr, 10);
+        int maxlen = (ipver == 6) ? 128 : 32;
+
+        /* endptr == plen_str means strtol consumed nothing, as in "10.0.0.0/": without
+         * this check plen would stay 0 and the entry would turn into a /0, i.e. allow
+         * every source address. */
+        if((endptr == plen_str) || *endptr || (plen < 0) || (plen > maxlen)) {
+            log_e("tunnel: invalid AllowedIPs prefix length '%s'", slash + 1);
+            goto fail;
+        }
+
+        prefix->ipver = (uint8_t) ipver;
+        prefix->prefixlen = (uint8_t) plen;
+        tun->cfg.num_allowed_ips++;
+
+        p = end ? (end + 1) : (p + len);
+    }
+
+    if(tun->cfg.num_allowed_ips == 0) {
+        log_e("tunnel: no AllowedIPs configured");
+        return false;
+    }
+
+    return true;
+
+fail:
+    /* Leave nothing behind: pd_tunnel_allows_source denies everything on an empty list */
+    tun->cfg.num_allowed_ips = 0;
+    return false;
+}
+
+/* ******************************************************* */
+
+bool pd_tunnel_allows_source(pd_tunnel_t *tun, const zdtun_ip_t *src, int ipver) {
+    if(!tun)
+        return false;
+
+    for(int i = 0; i < tun->cfg.num_allowed_ips; i++) {
+        const pd_tunnel_prefix_t *prefix = &tun->cfg.allowed_ips[i];
+        if(prefix->ipver != ipver)
+            continue;
+
+        int bits = prefix->prefixlen;
+        if(bits == 0)
+            return true; /* 0.0.0.0/0 or ::/0: the peer may use any source */
+
+        /* Both addresses are in network byte order, so comparing them byte by byte
+         * compares them most-significant bit first. */
+        const uint8_t *a = (ipver == 6) ? (const uint8_t *) &src->ip6
+                                        : (const uint8_t *) &src->ip4;
+        const uint8_t *b = (ipver == 6) ? (const uint8_t *) &prefix->ip.ip6
+                                        : (const uint8_t *) &prefix->ip.ip4;
+
+        int whole_bytes = bits / 8;
+        int rem_bits = bits % 8;
+
+        if(memcmp(a, b, whole_bytes) != 0)
+            continue;
+
+        if(rem_bits) {
+            uint8_t mask = (uint8_t) (0xFF << (8 - rem_bits));
+            if((a[whole_bytes] & mask) != (b[whole_bytes] & mask))
+                continue;
+        }
+
+        return true;
+    }
+
+    return false;
 }
 
 /* ******************************************************* */
@@ -79,6 +202,13 @@ static bool load_config(pcapdroid_t *pd, pd_tunnel_t *tun) {
         return false;
     }
 
+    char allowed_ips[1024];
+    allowed_ips[0] = '\0';
+    getStringPref(pd, "getTunnelAllowedIps", allowed_ips, sizeof(allowed_ips));
+    if(!pd_tunnel_parse_allowed_ips(tun, allowed_ips))
+        return false;
+
+    log_i("tunnel: %d AllowedIPs entries", tun->cfg.num_allowed_ips);
     return true;
 }
 

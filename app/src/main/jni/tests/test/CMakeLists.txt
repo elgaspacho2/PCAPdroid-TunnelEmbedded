@@ -57,3 +57,13 @@ add_test(NAME pcapng_epb_overlong_option COMMAND ./pcapng_reader epb_overlong_op
 
 test_source(root_capture)
 add_test(NAME root_capture COMMAND ./root_capture invalid_pkts)
+
+test_source(tunnel)
+add_test(NAME tunnel_full_tunnel COMMAND ./tunnel full_tunnel)
+add_test(NAME tunnel_split_tunnel COMMAND ./tunnel split_tunnel)
+add_test(NAME tunnel_non_byte_aligned_prefix COMMAND ./tunnel non_byte_aligned_prefix)
+add_test(NAME tunnel_host_prefix COMMAND ./tunnel host_prefix)
+add_test(NAME tunnel_ipv6_prefixes COMMAND ./tunnel ipv6_prefixes)
+add_test(NAME tunnel_empty_list COMMAND ./tunnel empty_list)
+add_test(NAME tunnel_malformed_lists COMMAND ./tunnel malformed_lists)
+add_test(NAME tunnel_max_entries COMMAND ./tunnel max_entries)

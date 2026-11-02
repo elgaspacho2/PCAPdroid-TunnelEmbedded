@@ -1,0 +1,59 @@
+<PreferenceScreen
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <SwitchPreference
+        app:key="tunnel_enabled"
+        app:title="@string/tunnel_enabled"
+        app:summary="@string/tunnel_enabled_summary"
+        app:iconSpaceReserved="false"
+        app:defaultValue="false" />
+
+    <!-- Shown only when the current settings are incompatible with the selected datapath.
+         The summary is filled in by TunnelSettings. -->
+    <Preference
+        app:key="tunnel_warning"
+        app:title="@string/tunnel_warning_title"
+        app:selectable="false"
+        app:iconSpaceReserved="false"
+        app:visible="false" />
+
+    <PreferenceCategory
+        app:key="tunnel_peer"
+        app:title="@string/tunnel_peer"
+        app:iconSpaceReserved="false">
+
+        <EditTextPreference
+            app:key="tunnel_config"
+            app:title="@string/tunnel_config"
+            app:dialogMessage="@string/tunnel_config_dialog"
+            app:iconSpaceReserved="false" />
+
+        <Preference
+            app:key="tunnel_config_help"
+            app:title="@string/tunnel_config_help"
+            app:summary="@string/tunnel_config_help_summary"
+            app:selectable="false"
+            app:iconSpaceReserved="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        app:key="tunnel_datapath_category"
+        app:title="@string/tunnel_datapath"
+        app:iconSpaceReserved="false">
+
+        <DropDownPreference
+            app:key="tunnel_datapath"
+            app:title="@string/tunnel_datapath_mode"
+            android:entries="@array/tunnel_datapath_labels"
+            android:entryValues="@array/tunnel_datapath"
+            app:iconSpaceReserved="false"
+            app:defaultValue="l3" />
+
+        <!-- The consequences of the selected datapath, filled in by TunnelSettings -->
+        <Preference
+            app:key="tunnel_datapath_info"
+            app:selectable="false"
+            app:iconSpaceReserved="false" />
+    </PreferenceCategory>
+</PreferenceScreen>

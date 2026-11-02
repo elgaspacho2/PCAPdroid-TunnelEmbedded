@@ -52,6 +52,9 @@ public class WgConfig implements Serializable {
     /** The tun MTU cannot exceed what the outer path can carry */
     public static final int MAX_MTU = 1500;
 
+    /** Must stay in sync with PD_TUNNEL_MAX_ALLOWED_IPS in jni/core/tunnel.h */
+    public static final int MAX_ALLOWED_IPS = 32;
+
     public static class InetPrefix implements Serializable {
         public final String address;
         public final int prefixLen;
@@ -259,6 +262,9 @@ public class WgConfig implements Serializable {
 
         if ((cfg.mtu < MIN_MTU) || (cfg.mtu > MAX_MTU))
             throw new ParseException("[Interface] MTU must be between " + MIN_MTU + " and " + MAX_MTU);
+
+        if (cfg.allowedIps.size() > MAX_ALLOWED_IPS)
+            throw new ParseException("[Peer] AllowedIPs has more than " + MAX_ALLOWED_IPS + " entries");
 
         if (cfg.allowedIps.isEmpty()) {
             // wg-quick has no default here, but a capture tool is only useful when it sees

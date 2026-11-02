@@ -1829,6 +1829,22 @@ public class CaptureService extends VpnService implements Runnable {
 
     public String getTunnelPresharedKey() { return (mWgConfig != null) ? mWgConfig.presharedKey : ""; }
 
+    /* The peer's AllowedIPs, as a comma-separated list of prefixes. The native side uses
+     * them to reject inner packets whose source the peer is not allowed to use. */
+    public String getTunnelAllowedIps() {
+        if (mWgConfig == null)
+            return "";
+
+        StringBuilder sb = new StringBuilder();
+        for (WgConfig.InetPrefix prefix: mWgConfig.allowedIps) {
+            if (sb.length() > 0)
+                sb.append(',');
+            sb.append(prefix.toString());
+        }
+
+        return sb.toString();
+    }
+
     // returns 1 if dumpPcapData should be called
     public int pcapDumpEnabled() {
         return((mSettings.dump_mode != Prefs.DumpMode.NONE) ? 1 : 0);

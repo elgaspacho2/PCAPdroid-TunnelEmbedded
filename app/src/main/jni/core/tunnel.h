@@ -70,6 +70,18 @@ typedef enum {
 
 /* ******************************************************* */
 
+/* WireGuard calls this cryptokey routing: a peer may only send inner packets whose
+ * source address falls inside the AllowedIPs it was configured with. Enforcing it is
+ * what keeps an authenticated-but-hostile peer from injecting packets that look like they
+ * came from a LAN host or from an unrelated server. */
+#define PD_TUNNEL_MAX_ALLOWED_IPS 32
+
+typedef struct {
+    zdtun_ip_t ip;
+    uint8_t prefixlen;
+    uint8_t ipver;
+} pd_tunnel_prefix_t;
+
 typedef enum {
     PD_TUNNEL_DOWN = 0,       /* not started, or stopped */
     PD_TUNNEL_CONNECTING,     /* started, no completed handshake yet */
@@ -85,6 +97,7 @@ typedef struct {
     uint64_t tx_datagrams;       /* outer UDP datagrams sent */
     uint64_t rx_datagrams;       /* outer UDP datagrams received */
     uint64_t dropped_pkts;       /* inner packets dropped (encap errors, buffer, MTU) */
+    uint64_t spoofed_pkts;       /* inner packets refused by the AllowedIPs check */
     int rtt_ms;                  /* -1 when unknown */
     char last_error[128];        /* empty when there is nothing to report */
 } pd_tunnel_status_t;
@@ -149,6 +162,10 @@ struct pd_tunnel {
         char private_key[64];
         char peer_public_key[64];
         char preshared_key[64];
+
+        /* The peer's AllowedIPs, used to reject spoofed source addresses on ingress */
+        pd_tunnel_prefix_t allowed_ips[PD_TUNNEL_MAX_ALLOWED_IPS];
+        int num_allowed_ips;
     } cfg;
 
     pd_tunnel_status_t status;
@@ -171,6 +188,16 @@ int pd_tunnel_send_ip(pd_tunnel_t *tun, const char *pkt, int len);
 int pd_tunnel_recv_ip(pd_tunnel_t *tun, char *buf, int bufsize);
 int pd_tunnel_tick(pd_tunnel_t *tun);
 void pd_tunnel_get_status(pd_tunnel_t *tun, pd_tunnel_status_t *out);
+
+/* True when the peer is allowed to send a packet with this source address.
+ * A tunnel with no AllowedIPs configured allows nothing, which fails closed. */
+bool pd_tunnel_allows_source(pd_tunnel_t *tun, const zdtun_ip_t *src, int ipver);
+
+/* Parses a comma-separated list of prefixes into tun->cfg.allowed_ips, e.g.
+ * "0.0.0.0/0,::/0". Returns false, leaving nothing installed, if any entry is malformed:
+ * a half-applied filter would silently change what the peer may send.
+ * Exposed for the tests in jni/tests/test/tunnel.c. */
+bool pd_tunnel_parse_allowed_ips(pd_tunnel_t *tun, const char *list);
 const char* pd_tunnel_state2str(pd_tunnel_state_t state);
 
 /* Backend constructors. Implemented by the tunnel_*.c files. */

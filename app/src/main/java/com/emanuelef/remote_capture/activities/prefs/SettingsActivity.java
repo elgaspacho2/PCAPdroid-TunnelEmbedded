@@ -61,6 +61,7 @@ import com.emanuelef.remote_capture.activities.MitmSetupWizard;
 import com.emanuelef.remote_capture.fragments.prefs.DnsSettings;
 import com.emanuelef.remote_capture.fragments.prefs.GeoipSettings;
 import com.emanuelef.remote_capture.fragments.prefs.Socks5Settings;
+import com.emanuelef.remote_capture.fragments.prefs.TunnelSettings;
 import com.emanuelef.remote_capture.interfaces.FragmentViewCreatedListener;
 import com.emanuelef.remote_capture.model.Prefs;
 import com.emanuelef.remote_capture.R;
@@ -147,6 +148,9 @@ public class SettingsActivity extends BaseActivity implements PreferenceFragment
         } else if(prefKey.equals("socks5_settings")) {
             targetFragment = new Socks5Settings();
             setTitle(R.string.socks5_proxy);
+        } else if(prefKey.equals("tunnel_settings")) {
+            targetFragment = new TunnelSettings();
+            setTitle(R.string.tunnel_settings);
         }
 
         if(targetFragment != null) {
@@ -192,6 +196,7 @@ public class SettingsActivity extends BaseActivity implements PreferenceFragment
         private Preference mVpnExceptions;
         private Preference mSocks5Settings;
         private Preference mDnsSettings;
+        private Preference mTunnelSettings;
         private Preference mPortMapping;
         private Preference mMitmWizard;
         private SwitchPreference mMalwareDetectionEnabled;
@@ -349,6 +354,7 @@ public class SettingsActivity extends BaseActivity implements PreferenceFragment
             mRestartOnDisconnect.setVisible(VpnReconnectService.isAvailable());
 
             mDnsSettings = requirePreference("dns_settings");;
+            mTunnelSettings = requirePreference("tunnel_settings");
             mVpnExceptions = requirePreference(Prefs.PREF_VPN_EXCEPTIONS);
             mVpnExceptions.setOnPreferenceClickListener(preference -> {
                 Intent intent = new Intent(requireContext(), VpnExemptionsActivity.class);
@@ -585,6 +591,10 @@ public class SettingsActivity extends BaseActivity implements PreferenceFragment
             mVpnExceptions.setVisible(!enabled);
             mDnsSettings.setVisible(!enabled);
             mPortMapping.setVisible(!enabled);
+
+            /* Root mode captures on a real interface and routes nothing, so the embedded
+             * tunnel does not apply to it */
+            mTunnelSettings.setVisible(!enabled);
         }
 
         private boolean checkDecrpytionWithRoot(boolean rootEnabled, boolean tlsDecryption) {
