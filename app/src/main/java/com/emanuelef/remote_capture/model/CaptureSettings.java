@@ -61,6 +61,11 @@ public class CaptureSettings implements Serializable {
     public int max_dump_size = 0;
     public String mitmproxy_opts;
 
+    /* Embedded tunnel egress, see docs/tunnel_embedded.md */
+    public boolean tunnel_enabled;
+    public String tunnel_config = "";
+    public Prefs.TunnelDatapath tunnel_datapath = Prefs.TunnelDatapath.L3;
+
     public CaptureSettings(Context ctx, SharedPreferences prefs) {
         dump_mode = Prefs.getDumpMode(prefs);
         app_filter = new HashSet<>(Prefs.getAppFilter(prefs));
@@ -80,6 +85,9 @@ public class CaptureSettings implements Serializable {
         block_quic_mode = Prefs.getBlockQuicMode(prefs);
         auto_block_private_dns = Prefs.isPrivateDnsBlockingEnabled(prefs);
         mitmproxy_opts = Prefs.getMitmproxyOpts(prefs);
+        tunnel_enabled = Prefs.isTunnelEnabled(prefs);
+        tunnel_config = Prefs.getTunnelConfig(prefs);
+        tunnel_datapath = Prefs.getTunnelDatapath(prefs);
         pcapng_format = Prefs.isPcapngEnabled(ctx, prefs);
         dump_extensions = pcapng_format || Prefs.isPcapdroidMetadataEnabled(prefs);
         api_capture = false;
@@ -116,6 +124,12 @@ public class CaptureSettings implements Serializable {
                 || getBool(intent, "pcapdroid_trailer", false) /* deprecated */;
         sslkeylog_name = getString(intent, "sslkeylog_name", "");
         decryption_rules_json = getDecryptionRulesFromIntent(intent);
+
+        /* NOTE: the embedded tunnel is deliberately NOT settable from the API. Accepting a
+         * WireGuard configuration from an intent would let any app on the device redirect
+         * the whole traffic of the other apps through a server of its choosing. A capture
+         * started via the API uses the tunnel only if the user configured it in the app:
+         * see CaptureService, which reads it from the preferences. */
         api_capture = true;
     }
 

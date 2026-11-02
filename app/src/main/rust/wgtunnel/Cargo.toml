@@ -1,0 +1,26 @@
+[package]
+name = "wgtunnel"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Userspace WireGuard state machine exposed over a C ABI, for PCAPdroid's embedded tunnel"
+publish = false
+
+[lib]
+name = "wgtunnel"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+boringtun = { version = "0.7", default-features = false }
+base64 = "0.22"
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+# NOTE: panic = "abort" is deliberately NOT set. The exported functions rely on
+# catch_unwind to turn a panic on malformed network input into a dropped packet
+# instead of taking down the whole capture service, and catch_unwind is a no-op
+# under panic = "abort".

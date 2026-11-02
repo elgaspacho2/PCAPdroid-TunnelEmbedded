@@ -90,6 +90,14 @@ public class PrefsSchema {
         string(Prefs.PREF_IGNORED_MITM_VERSION).noBackup();
         json(Prefs.PREF_DECRYPTION_LIST);
 
+        /* Embedded tunnel. The configuration is never exported: it carries the WireGuard
+         * private key, and a settings backup is a plain JSON file the user may share. */
+        bool(Prefs.PREF_TUNNEL_ENABLED);
+        string(Prefs.PREF_TUNNEL_CONFIG).noBackup();
+        string(Prefs.PREF_TUNNEL_DATAPATH, oneOf(
+                Prefs.TUNNEL_DATAPATH_L3,
+                Prefs.TUNNEL_DATAPATH_L4));
+
         // Dump
         string(Prefs.PREF_PCAP_DUMP_MODE, oneOf(
                 Prefs.DUMP_NONE, Prefs.DUMP_HTTP_SERVER,

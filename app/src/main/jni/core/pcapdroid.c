@@ -29,6 +29,7 @@
 extern int run_vpn(pcapdroid_t *pd);
 extern int run_pcap(pcapdroid_t *pd);
 extern void pcap_iter_connections(pcapdroid_t *pd, conn_cb cb);
+extern void tunnel_iter_connections(pcapdroid_t *pd, conn_cb cb);
 extern void vpn_process_ndpi(pcapdroid_t *pd, const zdtun_5tuple_t *tuple, pd_conn_t *data);
 
 /* ******************************************************* */
@@ -1203,6 +1204,9 @@ static int zdtun_iter_adapter(zdtun_t *zdt, const zdtun_conn_t *conn_info, void 
 static void iter_active_connections(pcapdroid_t *pd, conn_cb cb) {
     if(!pd->vpn_capture)
         pcap_iter_connections(pd, cb);
+    else if(pd->egress == PD_EGRESS_TUNNEL)
+        /* The L3 datapath owns no zdtun connection: it tracks the flows itself */
+        tunnel_iter_connections(pd, cb);
     else {
         struct iter_conn_data idata = {
                 .pd = pd,
@@ -1549,7 +1553,13 @@ int pd_run(pcapdroid_t *pd) {
     fw_num_checked_connections = 0;
 
     // Run the capture
-    int rv = pd->vpn_capture ? run_vpn(pd) : run_pcap(pd);
+    int rv;
+    if(!pd->vpn_capture)
+        rv = run_pcap(pd);
+    else if(pd->egress == PD_EGRESS_TUNNEL)
+        rv = run_tunnel(pd);
+    else
+        rv = run_vpn(pd);
 
     log_i("Stopped packet loop");
 

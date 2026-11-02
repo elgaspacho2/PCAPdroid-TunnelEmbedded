@@ -4,6 +4,9 @@ add_library(capture SHARED
         pcapdroid.c
         capture_vpn.c
         capture_pcap.c
+        capture_tunnel.c
+        tunnel.c
+        tunnel_wireguard.c
         ip_lru.c
         ndpi_config.c
         crc32.c

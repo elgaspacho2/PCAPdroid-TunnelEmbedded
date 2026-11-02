@@ -76,6 +76,7 @@ import com.emanuelef.remote_capture.model.MatchList;
 import com.emanuelef.remote_capture.model.PortMapping;
 import com.emanuelef.remote_capture.model.Prefs;
 import com.emanuelef.remote_capture.model.CaptureStats;
+import com.emanuelef.remote_capture.model.WgConfig;
 import com.emanuelef.remote_capture.pcap_dump.FileDumper;
 import com.emanuelef.remote_capture.pcap_dump.HTTPServer;
 import com.emanuelef.remote_capture.interfaces.PcapDumper;
@@ -179,6 +180,8 @@ public class CaptureService extends VpnService implements Runnable {
     private volatile boolean mGcPending;
     private BroadcastReceiver mNewAppsInstallReceiver;
     private Utils.PrivateDnsMode mPrivateDnsMode;
+    private WgConfig mWgConfig;
+    private boolean mTunnelEgress;
 
     /* The IP address of the virtual network interface */
     public static final String VPN_IP_ADDRESS = "10.215.173.1";
@@ -346,6 +349,9 @@ public class CaptureService extends VpnService implements Runnable {
             Log.w(TAG, "TLS decryption is not supported on this target, disabling it");
             mSettings.tls_decryption = false;
         }
+
+        if(!setupTunnelEgress())
+            return abortStart();
 
         // Retrieve DNS server
         String fallbackDnsV4 = Prefs.getDnsServerV4(mPrefs);
@@ -515,24 +521,32 @@ public class CaptureService extends VpnService implements Runnable {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
                 builder.setMetered(false);
 
-            if (getIPv4Enabled() == 1) {
-                builder.addAddress(vpn_ipv4, 30)
-                        .addRoute("0.0.0.0", 1)
-                        .addRoute("128.0.0.0", 1)
-                        .addDnsServer(vpn_dns);
-            }
+            if (mTunnelEgress) {
+                /* In tunnel mode the tun is the tunnel's own interface: the inner packets
+                 * are relayed verbatim, so they must carry the addresses the peer expects.
+                 * See configureTunnelInterface for the details. */
+                if (!configureTunnelInterface(builder))
+                    return abortStart();
+            } else {
+                if (getIPv4Enabled() == 1) {
+                    builder.addAddress(vpn_ipv4, 30)
+                            .addRoute("0.0.0.0", 1)
+                            .addRoute("128.0.0.0", 1)
+                            .addDnsServer(vpn_dns);
+                }
 
-            if (getIPv6Enabled() == 1) {
-                builder.addAddress(VPN_IP6_ADDRESS, 128);
+                if (getIPv6Enabled() == 1) {
+                    builder.addAddress(VPN_IP6_ADDRESS, 128);
 
-                // Route unicast IPv6 addresses
-                builder.addRoute("2000::", 3);
-                builder.addRoute("fc00::", 7);
+                    // Route unicast IPv6 addresses
+                    builder.addRoute("2000::", 3);
+                    builder.addRoute("fc00::", 7);
 
-                try {
-                    builder.addDnsServer(InetAddress.getByName(Prefs.getDnsServerV6(mPrefs)));
-                } catch (UnknownHostException | IllegalArgumentException e) {
-                    Log.w(TAG, "Could not set IPv6 DNS server");
+                    try {
+                        builder.addDnsServer(InetAddress.getByName(Prefs.getDnsServerV6(mPrefs)));
+                    } catch (UnknownHostException | IllegalArgumentException e) {
+                        Log.w(TAG, "Could not set IPv6 DNS server");
+                    }
                 }
             }
 
@@ -1191,6 +1205,193 @@ public class CaptureService extends VpnService implements Runnable {
         return((INSTANCE != null) ? INSTANCE.mSettings : null);
     }
 
+    /* Loads and validates the embedded tunnel configuration.
+     * Returns false when the capture must not start. */
+    private boolean setupTunnelEgress() {
+        mWgConfig = null;
+        mTunnelEgress = false;
+
+        if(!mSettings.tunnel_enabled)
+            return true;
+
+        if(mSettings.root_capture || mSettings.readFromPcap()) {
+            /* Root mode captures on a real interface and does not route anything, while a
+             * PCAP file has no egress at all. Both are a configuration mistake rather than
+             * a reason to refuse to capture, so the tunnel is just ignored. */
+            Log.i(TAG, "Ignoring the embedded tunnel: not applicable to this capture mode");
+            return true;
+        }
+
+        try {
+            mWgConfig = WgConfig.parse(mSettings.tunnel_config);
+        } catch (WgConfig.ParseException e) {
+            Log.e(TAG, "Invalid tunnel configuration: " + e.getMessage());
+            Utils.showToastLong(this, R.string.tunnel_invalid_config, e.getMessage());
+            mWgConfig = null;
+            return false;
+        }
+
+        /* The L3 datapath relays IP packets and never terminates a connection, so it has no
+         * socket to hand to a proxy. The features below all need one. Refusing early is
+         * clearer than starting a capture that silently ignores half of the settings. */
+        if(mSettings.tunnel_datapath == Prefs.TunnelDatapath.L3) {
+            String incompatible = null;
+
+            if(mSettings.tls_decryption)
+                incompatible = "TLS decryption";
+            else if(mSettings.socks5_enabled)
+                incompatible = "SOCKS5";
+            else if(Prefs.isPortMappingEnabled(mPrefs))
+                incompatible = "port mapping";
+
+            if(incompatible != null) {
+                Log.e(TAG, incompatible + " is not supported by the L3 tunnel datapath");
+                Utils.showToastLong(this, R.string.tunnel_feature_unsupported, incompatible);
+                mWgConfig = null;
+                return false;
+            }
+        } else {
+            /* The L4 datapath needs a userspace TCP/IP stack to turn the proxied sockets
+             * back into IP packets; see docs/tunnel_embedded.md. */
+            Log.e(TAG, "The L4 tunnel datapath is not implemented yet");
+            Utils.showToastLong(this, R.string.tunnel_datapath_unsupported);
+            mWgConfig = null;
+            return false;
+        }
+
+        if((mSettings.ip_mode != Prefs.IpMode.IPV6_ONLY) && !mWgConfig.hasIPv4Address()) {
+            Log.e(TAG, "The tunnel configuration has no IPv4 address");
+            Utils.showToastLong(this, R.string.tunnel_invalid_config, "[Interface] Address has no IPv4 address");
+            mWgConfig = null;
+            return false;
+        }
+
+        if((mSettings.ip_mode == Prefs.IpMode.IPV6_ONLY) && !mWgConfig.hasIPv6Address()) {
+            Log.e(TAG, "The tunnel configuration has no IPv6 address");
+            Utils.showToastLong(this, R.string.tunnel_invalid_config, "[Interface] Address has no IPv6 address");
+            mWgConfig = null;
+            return false;
+        }
+
+        mTunnelEgress = true;
+        Log.i(TAG, "Embedded tunnel egress enabled: " + mWgConfig);
+        return true;
+    }
+
+    /* Configures the tun for the embedded tunnel.
+     *
+     * The addresses and the routes come from the tunnel configuration, not from
+     * VPN_IP_ADDRESS: with no userspace NAT in the way, a packet leaving the tun reaches
+     * the peer with the source address it was given here, and the peer drops anything
+     * outside the AllowedIPs it was configured with.
+     *
+     * The DNS server is the one from the configuration too, so there is no internal DNS
+     * address to rewrite: PCAPdroid reads the queries straight off the tun. */
+    private boolean configureTunnelInterface(Builder builder) {
+        boolean wantIPv4 = (getIPv4Enabled() == 1);
+        boolean wantIPv6 = (getIPv6Enabled() == 1);
+        int numAddresses = 0;
+
+        /* The tunnel MTU must leave room for the WireGuard, UDP and IP headers of the outer
+         * datagram, which is why VPN_MTU (optimized for the socket egress, where the kernel
+         * re-fragments) cannot be used here. */
+        builder.setMtu(mWgConfig.mtu);
+
+        try {
+            for(WgConfig.InetPrefix addr: mWgConfig.addresses) {
+                if(addr.isIPv6() ? !wantIPv6 : !wantIPv4)
+                    continue;
+
+                builder.addAddress(addr.address, addr.prefixLen);
+                numAddresses++;
+            }
+
+            if(numAddresses == 0) {
+                Log.e(TAG, "No usable address in the tunnel configuration");
+                Utils.showToastLong(this, R.string.tunnel_invalid_config, "[Interface] Address");
+                return false;
+            }
+
+            if(wantIPv4) {
+                if(mWgConfig.isFullTunnel(false)) {
+                    /* Two /1 routes rather than a single /0: this is what the socket egress
+                     * does as well, and it takes precedence over a conflicting default
+                     * route installed by the system. */
+                    builder.addRoute("0.0.0.0", 1);
+                    builder.addRoute("128.0.0.0", 1);
+                } else {
+                    for(WgConfig.InetPrefix route: mWgConfig.allowedIps) {
+                        if(!route.isIPv6())
+                            builder.addRoute(route.address, route.prefixLen);
+                    }
+                }
+            }
+
+            if(wantIPv6) {
+                if(mWgConfig.isFullTunnel(true)) {
+                    // Route unicast IPv6 addresses, as in the socket egress
+                    builder.addRoute("2000::", 3);
+                    builder.addRoute("fc00::", 7);
+                } else {
+                    for(WgConfig.InetPrefix route: mWgConfig.allowedIps) {
+                        if(route.isIPv6())
+                            builder.addRoute(route.address, route.prefixLen);
+                    }
+                }
+            }
+
+            int numDns = 0;
+            for(String dns: mWgConfig.dnsServers) {
+                boolean isIPv6 = dns.contains(":");
+                if(isIPv6 ? !wantIPv6 : !wantIPv4)
+                    continue;
+
+                builder.addDnsServer(dns);
+                numDns++;
+            }
+
+            if(numDns == 0) {
+                /* Without a DNS server from the tunnel, the apps would keep using the
+                 * resolver of the underlying network, whose address is not routed into the
+                 * tunnel: the queries would be dropped. Fall back to the user's configured
+                 * DNS, which at least is reachable through a full tunnel. */
+                String fallback = wantIPv4 ? Prefs.getDnsServerV4(mPrefs) : Prefs.getDnsServerV6(mPrefs);
+                Log.w(TAG, "The tunnel configuration has no DNS server, falling back to " + fallback);
+                builder.addDnsServer(fallback);
+            }
+        } catch (IllegalArgumentException e) {
+            Log.e(TAG, "Could not configure the tunnel interface: " + e.getMessage());
+            Utils.showToastLong(this, R.string.tunnel_invalid_config, e.getMessage());
+            return false;
+        }
+
+        return true;
+    }
+
+    /* Resolves the peer endpoint on the underlying network, before the tun is up.
+     * The native side must be handed a literal address: resolving it from the capture
+     * thread would either leak the query into the tunnel we are about to build, or race
+     * with our own DNS handling. */
+    private boolean resolveTunnelEndpoint() {
+        String host = mWgConfig.endpointHost;
+
+        if(Utils.validateIpAddress(host)) {
+            mWgConfig.resolvedEndpoint = host;
+            return true;
+        }
+
+        String resolved = resolveHost(host);
+        if(resolved == null) {
+            Log.e(TAG, "Could not resolve the tunnel endpoint: " + host);
+            mHandler.post(() -> Utils.showToastLong(this, R.string.host_resolution_failed, host));
+            return false;
+        }
+
+        Log.i(TAG, "Resolved the tunnel endpoint: " + host + " -> " + resolved);
+        mWgConfig.resolvedEndpoint = resolved;
+        return true;
+    }
+
     private String resolveHost(String host) {
         if((Build.VERSION.SDK_INT < Build.VERSION_CODES.M) || (mUnderlyingNetwork == null))
             return null;
@@ -1217,6 +1418,9 @@ public class CaptureService extends VpnService implements Runnable {
             Log.i(TAG, "Resolved SOCKS5 proxy: " + mSocks5Address + " -> " + resolved);
             mSocks5Address = resolved;
         }
+
+        if(mTunnelEgress && !resolveTunnelEndpoint())
+            return false;
 
         if(!mCollectorAddress.isEmpty() && !Utils.validateIpAddress(mCollectorAddress)) {
             String resolved = resolveHost(mCollectorAddress);
@@ -1602,6 +1806,28 @@ public class CaptureService extends VpnService implements Runnable {
     public int getVpnMTU()      { return VPN_MTU; }
 
     public int getBlockQuickMode() { return mSettings.block_quic_mode.ordinal(); }
+
+    /* Embedded tunnel. These mirror pd_egress_mode_t / pd_tunnel_type_t /
+     * pd_tunnel_datapath_t in jni/core/tunnel.h. */
+    public int getEgressMode() { return mTunnelEgress ? 1 /* PD_EGRESS_TUNNEL */ : 0; }
+
+    public int getTunnelType() { return mTunnelEgress ? 1 /* PD_TUNNEL_TYPE_WIREGUARD */ : 0; }
+
+    public int getTunnelDatapath() { return mSettings.tunnel_datapath.ordinal(); }
+
+    public int getTunnelKeepalive() { return (mWgConfig != null) ? mWgConfig.persistentKeepalive : 0; }
+
+    public int getTunnelMTU() { return (mWgConfig != null) ? mWgConfig.mtu : WgConfig.DEFAULT_MTU; }
+
+    public String getTunnelEndpointAddress() { return (mWgConfig != null) ? mWgConfig.resolvedEndpoint : ""; }
+
+    public int getTunnelEndpointPort() { return (mWgConfig != null) ? mWgConfig.endpointPort : 0; }
+
+    public String getTunnelPrivateKey() { return (mWgConfig != null) ? mWgConfig.privateKey : ""; }
+
+    public String getTunnelPeerPublicKey() { return (mWgConfig != null) ? mWgConfig.peerPublicKey : ""; }
+
+    public String getTunnelPresharedKey() { return (mWgConfig != null) ? mWgConfig.presharedKey : ""; }
 
     // returns 1 if dumpPcapData should be called
     public int pcapDumpEnabled() {

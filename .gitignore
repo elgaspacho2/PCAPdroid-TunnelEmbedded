@@ -24,3 +24,8 @@ keystore
 
 # Python
 __pycache__
+
+# Rust (embedded tunnel core)
+app/src/main/rust/wgtunnel/target/
+# libwgtunnel.so is a build artifact produced by the buildWgTunnel gradle task
+app/src/main/jniLibs/

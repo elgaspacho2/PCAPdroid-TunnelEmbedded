@@ -647,4 +647,13 @@
     <string name="select_folder">Select folder</string>
     <string name="skip_action">Skip</string>
     <string name="always_on_vpn_stop_notice">Always-on VPN is enabled for PCAPdroid, so you need to stop the capture from the Android settings.\n\nDo you want to open the VPN settings now?</string>
+    <!-- Embedded tunnel -->
+    <string name="tunnel_invalid_config">Invalid tunnel configuration: %1$s</string>
+    <string name="tunnel_feature_unsupported">%1$s cannot be used with the L3 tunnel datapath</string>
+    <string name="tunnel_datapath_unsupported">The selected tunnel datapath is not available yet</string>
+    <string name="tunnel_status">Tunnel</string>
+    <string name="tunnel_state_down">Down</string>
+    <string name="tunnel_state_connecting">Connecting…</string>
+    <string name="tunnel_state_up">Up</string>
+    <string name="tunnel_state_error">Error</string>
 </resources>

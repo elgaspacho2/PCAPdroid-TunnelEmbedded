@@ -127,6 +127,82 @@ abstract class BuildHostZstdJniTask extends DefaultTask {
     }
 }
 
+/* Builds the Rust WireGuard core (app/src/main/rust/wgtunnel) into src/main/jniLibs, where
+ * it is packaged as libwgtunnel.so and dlopen'd at runtime by jni/core/tunnel_wireguard.c.
+ *
+ * The build is skipped, with a warning, when the toolchain is missing: libcapture.so does
+ * not link against this library, so the APK stays valid and the embedded tunnel simply
+ * reports itself as unavailable. Pass -PskipRust to skip it explicitly. */
+abstract class BuildWgTunnelTask extends DefaultTask {
+    @Inject abstract ExecOperations getExecOps()
+
+    /* The inputs are the sources only: crateDir also holds target/, whose size would make
+     * the up-to-date check both slow and meaningless. */
+    @InputFile File cargoToml
+    @InputDirectory File srcDir
+    @OutputDirectory File jniLibsDir
+    @Internal File crateDir
+    @Internal List<String> abis
+    @Internal String ndkDir
+
+    @TaskAction
+    void build() {
+        def cargo = System.getenv("CARGO") ?: "cargo"
+
+        // A missing cargo makes exec throw, while a missing cargo-ndk subcommand only makes
+        // it exit non-zero: both mean the same thing here.
+        def probe = new ByteArrayOutputStream()
+        def available = false
+        try {
+            available = execOps.exec {
+                commandLine cargo, 'ndk', '--version'
+                standardOutput = probe
+                errorOutput = probe
+                ignoreExitValue = true
+            }.exitValue == 0
+        } catch (Exception ignored) {
+            available = false
+        }
+
+        if (!available) {
+            logger.warn("wgtunnel: the Rust toolchain or cargo-ndk is not available, so the " +
+                    "embedded tunnel will report itself as unavailable at runtime. " +
+                    "Install it with: cargo install cargo-ndk")
+            return
+        }
+
+        if (!ndkDir) {
+            logger.warn("wgtunnel: the NDK directory could not be determined, skipping")
+            return
+        }
+
+        def args = [cargo, 'ndk']
+        abis.each { args += ['-t', it] }
+        args += ['-o', jniLibsDir.absolutePath, 'build', '--release']
+
+        execOps.exec {
+            commandLine args
+            workingDir crateDir
+            environment 'ANDROID_NDK_HOME', ndkDir
+        }
+    }
+}
+
+tasks.register('buildWgTunnel', BuildWgTunnelTask) {
+    crateDir = file("src/main/rust/wgtunnel")
+    cargoToml = file("src/main/rust/wgtunnel/Cargo.toml")
+    srcDir = file("src/main/rust/wgtunnel/src")
+    jniLibsDir = file("src/main/jniLibs")
+    // Keep in sync with the ABIs the NDK build produces
+    abis = ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64']
+    ndkDir = android.ndkDirectory?.absolutePath ?: ""
+
+    // Captured at configuration time, so the predicate holds no reference to the project
+    def skipRust = project.hasProperty("skipRust")
+    def hasCrate = file("src/main/rust/wgtunnel/Cargo.toml").exists()
+    onlyIf { !skipRust && hasCrate }
+}
+
 tasks.register('buildHostZstdJni', BuildHostZstdJniTask) {
     jniSrcDir = file("src/main/jni/zstd")
     zstdLibDir = file("${rootDir}/submodules/zstd/lib")
@@ -135,6 +211,10 @@ tasks.register('buildHostZstdJni', BuildHostZstdJniTask) {
 }
 
 tasks.configureEach { task ->
+    // The native libraries must be in place before they are merged into the APK
+    if (task.name.startsWith("merge") && task.name.endsWith("JniLibFolders"))
+        task.dependsOn buildWgTunnel
+
     if (task.name.startsWith("test") && task.name.endsWith("UnitTest")) {
         task.dependsOn buildHostZstdJni
     }

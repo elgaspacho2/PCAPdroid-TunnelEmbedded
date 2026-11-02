@@ -124,6 +124,17 @@ public class Prefs {
     public static final String PREF_AVAILABLE_SKUS = "available_skus";
     public static final String PREF_UNLOCK_TOKEN = "unlock_token";
 
+    /* Embedded tunnel (see docs/tunnel_embedded.md). When enabled, the captured traffic
+     * leaves through a tunnel that runs inside PCAPdroid instead of through zdtun's
+     * userspace NAT, which is what lets the app hold the single per-profile VpnService
+     * slot while the real VPN runs embedded. */
+    public static final String PREF_TUNNEL_ENABLED = "tunnel_enabled";
+    public static final String PREF_TUNNEL_CONFIG = "tunnel_config";
+    public static final String PREF_TUNNEL_DATAPATH = "tunnel_datapath";
+    public static final String TUNNEL_DATAPATH_L3 = "l3";
+    public static final String TUNNEL_DATAPATH_L4 = "l4";
+    public static final String TUNNEL_DATAPATH_DEFAULT = TUNNEL_DATAPATH_L3;
+
     /* The default maximum connections to log into the ConnectionsRegister. Older connections are dropped.
      * Average Java-heap cost is ~2 KB per connection (covers payload-minimal mode and possible new additions);
      * base app overhead is ~8 MB. The user can override this via Prefs.PREF_CONNECTIONS_LOG_SIZE,
@@ -157,6 +168,13 @@ public class Prefs {
         TO_DECRYPT
     }
 
+    /* How the packets reach the embedded tunnel. Must stay in sync with
+     * pd_tunnel_datapath_t in jni/core/tunnel.h, the ordinal is passed to native. */
+    public enum TunnelDatapath {
+        L3,
+        L4
+    }
+
     public enum PayloadMode {
         NONE,
         MINIMAL,
@@ -186,6 +204,13 @@ public class Prefs {
             case BLOCK_QUIC_MODE_ALWAYS:        return BlockQuicMode.ALWAYS;
             case BLOCK_QUIC_MODE_TO_DECRYPT:    return BlockQuicMode.TO_DECRYPT;
             default:                            return BlockQuicMode.NEVER;
+        }
+    }
+
+    public static TunnelDatapath getTunnelDatapath(String pref) {
+        switch (pref) {
+            case TUNNEL_DATAPATH_L4:    return TunnelDatapath.L4;
+            default:                    return TunnelDatapath.L3;
         }
     }
 
@@ -265,6 +290,9 @@ public class Prefs {
     public static boolean isTLSDecryptionSetupDone(SharedPreferences p)     { return(p.getBoolean(PREF_TLS_DECRYPTION_SETUP_DONE, false)); }
     public static boolean getFullPayloadMode(SharedPreferences p) { return(p.getBoolean(PREF_FULL_PAYLOAD, false)); }
     public static boolean isPrivateDnsBlockingEnabled(SharedPreferences p) { return(p.getBoolean(PREF_AUTO_BLOCK_PRIVATE_DNS, true)); }
+    public static boolean isTunnelEnabled(SharedPreferences p) { return(p.getBoolean(PREF_TUNNEL_ENABLED, false)); }
+    public static String getTunnelConfig(SharedPreferences p) { return(p.getString(PREF_TUNNEL_CONFIG, "")); }
+    public static TunnelDatapath getTunnelDatapath(SharedPreferences p) { return(getTunnelDatapath(p.getString(PREF_TUNNEL_DATAPATH, TUNNEL_DATAPATH_DEFAULT))); }
     public static boolean lockdownVpnNoticeShown(SharedPreferences p)      { return(p.getBoolean(PREF_LOCKDOWN_VPN_NOTICE_SHOWN, false)); }
     public static boolean blockNewApps(SharedPreferences p)       { return(p.getBoolean(PREF_BLOCK_NEW_APPS, false)); }
     public static boolean isFirewallWhitelistMode(SharedPreferences p)     { return(p.getBoolean(PREF_FIREWALL_WHITELIST_MODE, false)); }
@@ -347,6 +375,9 @@ public class Prefs {
                 "\nRootCapture: " + isRootCaptureEnabled(p) +
                 "\nSocks5: " + getSocks5Enabled(p) +
                 "\nBlockPrivateDns: " + isPrivateDnsBlockingEnabled(p) +
+                // NOTE: the tunnel config holds private keys, only report whether it is set
+                "\nTunnel: " + (isTunnelEnabled(p) ? getTunnelDatapath(p).name() : "off") +
+                "\nTunnelConfigured: " + !getTunnelConfig(p).isEmpty() +
                 "\nCaptureInterface: " + getCaptureInterface(p) +
                 "\nMalwareDetection: " + isMalwareDetectionEnabled(ctx, p) +
                 "\nFirewall: " + isFirewallEnabled(ctx, p) +

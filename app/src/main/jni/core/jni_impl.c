@@ -692,6 +692,7 @@ Java_com_emanuelef_remote_1capture_CaptureService_runPacketLoop(JNIEnv *env, jcl
             },
             .mitm_addon_uid = getIntPref(env, vpn, "getMitmAddonUid"),
             .vpn_capture = (bool) getIntPref(env, vpn, "isVpnCapture"),
+            .egress = (pd_egress_mode_t) getIntPref(env, vpn, "getEgressMode"),
             .pcap_file_capture = (bool) getIntPref(env, vpn, "isPcapFileCapture"),
             .payload_mode = (payload_mode_t) getIntPref(env, vpn, "getPayloadMode"),
             .pcap_dump = {

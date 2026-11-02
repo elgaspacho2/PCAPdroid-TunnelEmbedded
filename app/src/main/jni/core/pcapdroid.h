@@ -25,6 +25,7 @@
 #include "ip_lru.h"
 #include "blacklist.h"
 #include "pcap_dump.h"
+#include "tunnel.h"
 #include "ndpi_api.h"
 #include "common/jni_utils.h"
 #include "common/uid_resolver.h"
@@ -225,6 +226,11 @@ typedef struct pcapdroid {
     // config
     jint mitm_addon_uid;
     bool vpn_capture;
+
+    /* Where the captured packets are sent once analyzed. PD_EGRESS_SOCKETS is the
+     * historical zdtun userspace NAT; PD_EGRESS_TUNNEL hands them to the tunnel embedded
+     * in the app (see tunnel.h). Only meaningful when vpn_capture is set. */
+    pd_egress_mode_t egress;
     bool pcap_file_capture;
     const char *keylog_path_override;  // For tests: override sslkeylog.txt location
     payload_mode_t payload_mode;
@@ -267,6 +273,14 @@ typedef struct pcapdroid {
             int app_filter_uids_size;
         } pcap;
     };
+
+    /* Embedded tunnel state. Deliberately outside the union above: tunnel mode is a
+     * VpnService capture, so it shares the tun fd, the UID resolver and the DNS settings
+     * held in `vpn`, and only replaces the egress and the connection tracking. */
+    struct {
+        pd_tunnel_t *tun;
+        struct tunnel_conn_t *connections;
+    } tunnel;
 
     struct {
         bool enabled;
